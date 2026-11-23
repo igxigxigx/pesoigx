@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#173b63">
+<title>Peso - IGX</title>
+<style>
+:root{font-family:Arial,Helvetica,sans-serif;color:#172536;background:#eef2f6}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:18px}
+main{width:min(100%,440px);background:#fff;border-radius:22px;padding:25px 21px;box-shadow:0 8px 28px #132b451c}
+.brand{text-align:center;font-weight:800;letter-spacing:2px;color:#173b63;font-size:19px;margin:2px 0 8px}
+h1{text-align:center;margin:0 0 25px;font-size:30px;letter-spacing:4px;color:#173b63}
+input{width:100%;font-size:34px;text-align:center;padding:16px 10px;border:2px solid #c8d4e0;border-radius:13px;outline:none}
+input:focus{border-color:#2468a5}
+.buttons{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
+button{border:0;border-radius:12px;padding:16px 8px;font-size:16px;font-weight:700;background:#173b63;color:white;min-height:54px}
+button:active{transform:scale(.98)}
+button.secondary{background:#e7edf4;color:#173b63}
+button.danger{background:#a52b2b;color:#fff}
+#status{text-align:center;min-height:24px;margin:15px 0 0;color:#31536f;font-size:14px}
+#view{display:none;margin-top:20px;border-top:1px solid #dce4ec;padding-top:14px}
+#view h2{font-size:19px;margin:0 0 10px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 5px;border-bottom:1px solid #e2e8ef}
+th:last-child,td:last-child{text-align:right}
+#chartWrap{margin:18px 0 12px;padding:12px 8px;border:1px solid #dce4ec;border-radius:12px;background:#fbfcfe}
+#chartWrap h3{font-size:16px;margin:0 0 10px;color:#173b63}
+#weightChart{display:block;width:100%;height:230px}
+#chartHint{font-size:12px;color:#68798a;text-align:center;margin-top:6px}
+.small{font-size:12px;color:#68798a;text-align:center;margin-top:18px}
+
+#notesPanel{display:none;position:fixed;inset:0;background:#10253b99;z-index:999;align-items:center;justify-content:center;padding:16px}
+#notesCard{width:min(100%,460px);max-height:90vh;overflow:auto;background:#fff;border-radius:18px;padding:20px;box-shadow:0 10px 35px #0003}
+#notesCard h2{margin:0 0 12px;color:#173b63}
+#noteText{width:100%;min-height:120px;resize:vertical;font-size:16px;text-align:left;padding:12px;border:1px solid #c8d4e0;border-radius:12px}
+#notesHistory{margin:14px 0;max-height:35vh;overflow:auto}
+.noteEntry{padding:10px;border:1px solid #e2e8ef;border-radius:10px;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.noteEntry time{display:block;color:#68798a;font-size:12px;margin-bottom:6px}
+.noteActions{display:grid;grid-template-columns:1fr;gap:10px}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">CREATO DA IGX</div>
+  <h1>PESO</h1>
+  <input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="00,0" aria-label="Inserisci il peso">
+  <div class="buttons">
+    <button id="save">SALVA</button>
+    <button id="viewBtn" class="secondary">VISUALIZZA</button>
+    <button id="export">ESPORTA</button>
+    <button id="notesBtn" class="secondary">NOTE</button>
+    <button id="importBtn" class="secondary">CARICA</button>
+    <button id="clearBtn" class="danger">CANCELLA</button>
+    <button id="exit" class="secondary">ESCI</button>
+  </div>
+  <input id="importFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" aria-label="Seleziona il file di backup Excel">
+  <div id="status" role="status">Inserisci il peso e premi SALVA.</div>
+  <section id="view">
+    <h2>Pesi registrati</h2>
+    <div id="chartWrap">
+      <h3>Andamento del peso</h3>
+      <canvas id="weightChart" role="img" aria-label="Grafico dell’andamento dei pesi registrati"></canvas>
+      <div id="chartHint">Registra almeno un peso per visualizzare il grafico.</div>
+    </div>
+    <table><thead><tr><th>Data e ora</th><th>Peso</th></tr></thead><tbody id="rows"></tbody></table>
+    <button id="closeView" class="secondary" style="width:100%;margin-top:14px">INDIETRO</button>
+  </section>
+  <div class="small">I dati restano salvati in questo browser su questo dispositivo.</div>
+</main>
+<div id="notesPanel" role="dialog" aria-modal="true" aria-labelledby="notesTitle">
+  <div id="notesCard">
+    <h2 id="notesTitle">NOTE</h2>
+    <div id="notesHistory"></div>
+    <textarea id="noteText" placeholder="Scrivi una nuova nota..." aria-label="Testo della nota"></textarea>
+    <div class="noteActions"><button id="saveNote">SALVA NOTA</button><button id="deleteNotes" class="danger">CANCELLA NOTE</button><button id="closeNotes" class="secondary">CHIUDI</button></div>
+  </div>
+</div>
+<script>
+"use strict";
+const DB_NAME="PesoIGX_DB", STORE="registrazioni";
+const $=id=>document.getElementById(id);
+let db;
+function status(t){$("status").textContent=t}
+function openDB(){return new Promise((resolve,reject)=>{
+ const req=indexedDB.open(DB_NAME,1);
+ req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(STORE))req.result.createObjectStore(STORE,{keyPath:"id",autoIncrement:true})};
+ req.onsuccess=()=>{db=req.result;resolve(db)};
+ req.onerror=()=>reject(req.error);
+})}
+function allRows(){return new Promise((resolve,reject)=>{
+ const tx=db.transaction(STORE,"readonly"),r=tx.objectStore(STORE).getAll();
+ r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+})}
+function addRow(row){return new Promise((resolve,reject)=>{
+ const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).add(row);
+ tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);
+})}
+function clearRows(){return new Promise((resolve,reject)=>{
+ const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).clear();
+ tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);
+})}
+function parseWeight(){
+ let s=$("weight").value.trim().replace(",",".");
+ if(!/^\d{1,6}(\.\d)?$/.test(s))return null;
+ const n=Number(s);return Number.isFinite(n)?n:null;
+}
+$("save").onclick=async()=>{
+ const n=parseWeight();
+ if(n===null){status("Inserisci un numero valido con un solo decimale, ad esempio 72,5.");return}
+ try{
+  const d=new Date();
+  await addRow({date:d.toLocaleDateString("it-IT"),time:d.toLocaleTimeString("it-IT"),stamp:d.toISOString(),weight:n.toFixed(1).replace(".",",")});
+  $("weight").value="";status("Peso salvato correttamente.");
+  if($("view").style.display==="block")showRows();
+ }catch(e){status("Errore durante il salvataggio.");}
+};
+async function showRows(){
+ const data=await allRows();data.sort((a,b)=>a.id-b.id);
+ $("rows").innerHTML="";
+ if(!data.length){$("rows").innerHTML='<tr><td colspan="2">Nessun peso registrato.</td></tr>'}
+ else for(const r of data){
+  const tr=document.createElement("tr"),a=document.createElement("td"),b=document.createElement("td");
+  a.textContent=r.date+" "+r.time;b.textContent=r.weight+" kg";tr.append(a,b);$("rows").append(tr);
+ }
+ $("view").style.display="block";
+ requestAnimationFrame(()=>drawWeightChart(data));
+}
+function drawWeightChart(data){
+ const canvas=$("weightChart"),hint=$("chartHint");
+ const rect=canvas.getBoundingClientRect(),w=Math.max(280,rect.width||320),h=230;
+ const dpr=Math.max(1,window.devicePixelRatio||1);
+ canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+ const ctx=canvas.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+ const values=data.map(r=>Number(String(r.weight).replace(",","."))).filter(Number.isFinite);
+ if(!values.length){hint.textContent="Registra almeno un peso per visualizzare il grafico.";return}
+ hint.textContent=values.length===1?"Un solo rilevamento: aggiungi altri pesi per vedere l'andamento.":values.length+" rilevamenti registrati";
+ const left=43,right=12,top=14,bottom=34,plotW=w-left-right,plotH=h-top-bottom;
+ let min=Math.min(...values),max=Math.max(...values);if(min===max){min-=1;max+=1}
+ const pad=(max-min)*0.18;min-=pad;max+=pad;
+ const y=v=>top+(max-v)/(max-min)*plotH;
+ ctx.font="11px Arial";ctx.textAlign="right";ctx.textBaseline="middle";
+ for(let i=0;i<5;i++){
+  const val=min+(max-min)*i/4,yy=y(val);
+  ctx.strokeStyle="#e5ebf1";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(w-right,yy);ctx.stroke();
+  ctx.fillStyle="#68798a";ctx.fillText(val.toFixed(1).replace(".",","),left-7,yy);
+ }
+ const pts=values.map((v,i)=>({x:values.length===1?left+plotW/2:left+i*plotW/(values.length-1),y:y(v),v}));
+ if(pts.length>1){ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);ctx.strokeStyle="#2468a5";ctx.lineWidth=2.5;ctx.lineJoin="round";ctx.stroke()}
+ for(const p of pts){ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fillStyle="#173b63";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=1.5;ctx.stroke()}
+ ctx.fillStyle="#68798a";ctx.textAlign="center";ctx.textBaseline="top";
+ const dates=data.map(r=>r.date||"");
+ if(dates.length){ctx.fillText(dates[0],left,h-bottom+10);if(dates.length>1)ctx.fillText(dates[dates.length-1],w-right,h-bottom+10)}
+} 
+window.addEventListener("resize",()=>{if($("view").style.display==="block")allRows().then(drawWeightChart).catch(()=>{})});
+$("viewBtn").onclick=()=>showRows().catch(()=>status("Impossibile leggere i dati."));
+$("clearBtn").onclick=async()=>{
+ if(!window.confirm("ATTENZIONE: vuoi cancellare TUTTI i pesi memorizzati e azzerare il grafico? Questa operazione non si può annullare. Il file di backup esportato non verrà cancellato."))return;
+ try{
+  await clearRows();
+  $("weight").value="";
+  if($("view").style.display==="block")await showRows();
+  status("Tutti i pesi memorizzati sono stati cancellati. Il grafico è stato azzerato.");
+ }catch(e){status("Errore durante la cancellazione dei dati.");}
+};
+$("closeView").onclick=()=>$("view").style.display="none";
+function xmlEscape(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function crc32(bytes){let c=-1;for(const b of bytes){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0)}return (c^-1)>>>0}
+function zip(files){
+ const enc=new TextEncoder(),parts=[],central=[];let offset=0;
+ const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+ for(const [name,content] of files){
+  const nb=enc.encode(name),data=enc.encode(content),crc=crc32(data);
+  const local=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(nb.length),...u16(0),...nb,...data]);
+  parts.push(local);
+  const cd=new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(nb.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset),...nb]);
+  central.push(cd);offset+=local.length;
+ }
+ const centralSize=central.reduce((s,a)=>s+a.length,0),count=files.length;
+ const end=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(count),...u16(count),...u32(centralSize),...u32(offset),...u16(0)]);
+ return new Blob([...parts,...central,end],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+function makeXlsx(data){
+ const rows=[["Data","Ora","Peso (kg)"],...data.map(r=>[r.date,r.time,Number(r.weight.replace(",","."))])];
+ const sheet=rows.map((row,i)=>'<row r="'+(i+1)+'">'+row.map((v,j)=>{
+  const ref=String.fromCharCode(65+j)+(i+1);
+  return typeof v==="number"?'<c r="'+ref+'"><v>'+v+'</v></c>':'<c r="'+ref+'" t="inlineStr"><is><t>'+xmlEscape(v)+'</t></is></c>';
+ }).join("")+'</row>').join("");
+ const files=[
+ ["[Content_Types].xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+ ["_rels/.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+ ["xl/workbook.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Pesi" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+ ["xl/_rels/workbook.xml.rels",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
+ ["xl/worksheets/sheet1.xml",'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+sheet+'</sheetData></worksheet>']
+ ];
+ return zip(files);
+}
+function downloadXlsx(file){
+ const url=URL.createObjectURL(file),a=document.createElement("a");
+ a.href=url;a.download="peso.xlsx";document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+$("export").onclick=async()=>{
+ try{
+  const data=await allRows();
+  if(!data.length){status("Non ci sono pesi da esportare.");return}
+  const file=new File([makeXlsx(data)],"peso.xlsx",{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  // Quando disponibile, il selettore permette di scegliere il backup esistente e sovrascriverlo.
+  const isNative=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
+  if(isNative){
+   // App Android: salva il file e apre il menu "Condividi" (Drive, WhatsApp, email, salva nei file...)
+   const P=window.Capacitor.Plugins||{};
+   if(!P.Filesystem||!P.Share)throw new Error("funzione di condivisione non disponibile");
+   const b64=await new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(String(r.result).split(",")[1]);
+    r.onerror=()=>rej(new Error("lettura del file non riuscita"));
+    r.readAsDataURL(file);
+   });
+   const saved=await P.Filesystem.writeFile({path:"peso.xlsx",data:b64,directory:"CACHE"});
+   try{
+    await P.Share.share({title:"Backup Peso IGX",dialogTitle:"Salva o invia il backup",url:saved.uri});
+    status("Backup pronto: scegli dove salvarlo o a chi inviarlo.");
+   }catch(shareError){
+    if(shareError && /cancel/i.test(String(shareError.message||shareError)))return;
+    throw shareError;
+   }
+  }else if(window.showSaveFilePicker){
+   try{
+    const handle=await window.showSaveFilePicker({
+     suggestedName:"peso.xlsx",
+     types:[{description:"Backup Peso IGX (Excel)",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}]
+    });
+    const writable=await handle.createWritable();
+    await writable.write(file);
+    await writable.close();
+    status("Backup aggiornato: il file selezionato è stato sostituito con i dati più recenti.");
+   }catch(saveError){
+    if(saveError && saveError.name==="AbortError")return;
+    throw saveError;
+   }
+  }else{
+   downloadXlsx(file);
+   status("Backup scaricato come peso.xlsx. Questo browser non permette di sovrascrivere automaticamente il file precedente: elimina il vecchio peso.xlsx dalla cartella Download prima di conservare quello nuovo.");
+  }
+ }catch(e){
+  status("Errore nell'esportazione: "+(e && e.message ? e.message : "operazione non riuscita"));
+ }
+};
+// Legge il file XLSX creato dal pulsante ESPORTA (archivio ZIP non compresso).
+async function readExportedXlsx(file){
+ if(!file || !file.name.toLowerCase().endsWith(".xlsx"))throw new Error("Seleziona un file .xlsx creato con ESPORTA.");
+ if(file.size>20*1024*1024)throw new Error("Il file è troppo grande.");
+ const bytes=new Uint8Array(await file.arrayBuffer()),view=new DataView(bytes.buffer);
+ const u16=o=>view.getUint16(o,true),u32=o=>view.getUint32(o,true);
+ let offset=0,xmlText=null;
+ while(offset+30<=bytes.length && u32(offset)===0x04034b50){
+  const method=u16(offset+8),compressed=u32(offset+18),nameLen=u16(offset+26),extraLen=u16(offset+28);
+  const name=new TextDecoder().decode(bytes.slice(offset+30,offset+30+nameLen));
+  const start=offset+30+nameLen+extraLen,end=start+compressed;
+  if(end>bytes.length)throw new Error("Il file Excel è danneggiato.");
+  if(name==="xl/worksheets/sheet1.xml"){
+   if(method!==0)throw new Error("Formato Excel non riconosciuto. Usa il file creato da ESPORTA in Peso IGX.");
+   xmlText=new TextDecoder("utf-8").decode(bytes.slice(start,end));break;
+  }
+  if(method!==0)throw new Error("Formato Excel non riconosciuto. Usa il file creato da ESPORTA in Peso IGX.");
+  offset=end;
+ }
+ if(!xmlText)throw new Error("Nel file non trovo il registro dei pesi di Peso IGX.");
+ const doc=new DOMParser().parseFromString(xmlText,"application/xml");
+ if(doc.querySelector("parsererror"))throw new Error("Il contenuto del file Excel non è leggibile.");
+ const result=[];
+ for(const row of Array.from(doc.getElementsByTagName("row")).slice(1)){
+  const cells={};
+  for(const cell of Array.from(row.getElementsByTagName("c"))){
+   const ref=cell.getAttribute("r")||"",col=(ref.match(/^[A-Z]+/)||[""])[0];
+   const inline=cell.getElementsByTagName("t")[0],value=inline?inline.textContent:(cell.getElementsByTagName("v")[0]?.textContent||"");
+   if(col)cells[col]=value;
+  }
+  const date=String(cells.A||"").trim(),time=String(cells.B||"").trim(),n=Number(String(cells.C||"").replace(",","."));
+  if(date && time && Number.isFinite(n) && n>0){
+   const d=new Date();result.push({date,time,stamp:d.toISOString(),weight:n.toFixed(1).replace(".",",")});
+  }
+ }
+ if(!result.length)throw new Error("Non ho trovato registrazioni valide nel file.");
+ return result;
+}
+$("importBtn").onclick=()=>$("importFile").click();
+$("importFile").onchange=async event=>{
+ const file=event.target.files && event.target.files[0];
+ if(!file)return;
+ try{
+  const incoming=await readExportedXlsx(file),existing=await allRows();
+  const seen=new Set(existing.map(r=>[r.date,r.time,String(r.weight).replace(",",".")].join("|")));
+  const fresh=[];
+  for(const r of incoming){const key=[r.date,r.time,String(r.weight).replace(",",".")].join("|");if(!seen.has(key)){seen.add(key);fresh.push(r)}}
+  for(const r of fresh)await addRow(r);
+  status(fresh.length?"Caricamento completato: "+fresh.length+" registrazioni aggiunte.":"Il file è già caricato: non ci sono nuovi pesi da aggiungere.");
+  if($("view").style.display==="block")await showRows();
+ }catch(e){status("Caricamento non riuscito: "+(e&&e.message?e.message:"file non valido"));}
+ finally{event.target.value="";}
+};
+$("exit").onclick=()=>{status("Puoi chiudere questa scheda di Chrome.");try{window.close()}catch(e){}};
+
+// Modulo NOTE aggiunto separatamente: non modifica il registro dei pesi.
+const NOTES_KEY="PesoIGX_notes_v1";
+function getNotes(){try{return JSON.parse(localStorage.getItem(NOTES_KEY)||"[]")}catch(e){return []}}
+function renderNotes(){
+ const history=$("notesHistory"),notes=getNotes();history.innerHTML="";
+ if(!notes.length){history.innerHTML='<p style="color:#68798a;text-align:center">Nessuna nota precedente.</p>';return}
+ notes.slice().reverse().forEach(note=>{
+  const entry=document.createElement("div"),time=document.createElement("time"),body=document.createElement("div");
+  entry.className="noteEntry";time.textContent=note.date+" "+note.time;body.textContent=note.text;entry.append(time,body);history.append(entry);
+ });
+}
+$("notesBtn").onclick=()=>{renderNotes();$("noteText").value="";$("notesPanel").style.display="flex";$("noteText").focus()};
+$("closeNotes").onclick=()=>$("notesPanel").style.display="none";
+$("deleteNotes").onclick=()=>{
+ if(!getNotes().length){alert("Non ci sono note da cancellare.");return}
+ if(!confirm("Vuoi cancellare definitivamente tutte le note? I pesi e gli altri dati non verranno modificati."))return;
+ try{localStorage.removeItem(NOTES_KEY);renderNotes();$("noteText").value="";status("Tutte le note sono state cancellate.");}
+ catch(e){alert("Impossibile cancellare le note.");}
+};
+$("saveNote").onclick=()=>{
+ const text=$("noteText").value.trim();if(!text){alert("Scrivi il testo della nota prima di salvarla.");return}
+ const d=new Date(),notes=getNotes();notes.push({date:d.toLocaleDateString("it-IT"),time:d.toLocaleTimeString("it-IT"),stamp:d.toISOString(),text});
+ try{localStorage.setItem(NOTES_KEY,JSON.stringify(notes));$("notesPanel").style.display="none";$("noteText").value="";status("Nota salvata correttamente.")}
+ catch(e){alert("Impossibile salvare la nota nel browser.")}
+};
+$("notesPanel").addEventListener("click",e=>{if(e.target===$("notesPanel"))$("notesPanel").style.display="none"});
+
+openDB().then(()=>status("Pronto. Inserisci il peso e premi SALVA.")).catch(()=>status("Attiva la memorizzazione del browser e riapri il file."));
+</script>
+</body>
+</html>
